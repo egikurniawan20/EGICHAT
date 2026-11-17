@@ -2,45 +2,62 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Buka zip project
-        run: unzip -q EGICHAT-APK-v2.zip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: 17
 
-      - name: Terima lisensi Android SDK
-        run: yes | sdkmanager --licenses > /dev/null || true
+      - name: Install dependencies
+        run: npm install
 
-      - name: Setup Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Add permissions (mic, camera, notifikasi, dll)
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          PERMS='    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\n    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n    <uses-feature android:name="android.hardware.microphone" android:required="false" />'
+          sed -i "s|<application|${PERMS}\n    <application|" "$MANIFEST"
+          sed -i 's|<application|<application android:usesCleartextTraffic="true"|' "$MANIFEST"
+
+      - name: Sync web assets
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk EGICHAT.apk
+
+      - uses: actions/upload-artifact@v4
         with:
-          gradle-version: '8.9'
+          name: EGICHAT-apk
+          path: EGICHAT.apk
 
-      - name: Build APK
-        working-directory: EGICHAT-APK
-        run: gradle assembleRelease --no-daemon --stacktrace
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Publish to Releases
+        uses: softprops/action-gh-release@v2
         with:
-          name: EGICHAT-APK
-          path: EGICHAT-APK/app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: error
+          tag_name: latest-${{ github.run_number }}
+          name: EGICHAT build ${{ github.run_number }}
+          files: EGICHAT.apk
+          
